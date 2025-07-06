@@ -1,0 +1,33 @@
+# Ticket Booking System - Project Overview
+
+## Project Concept
+This is a **high-performance, scalable ticket booking web application** built with Go, featuring pessimistic locking, concurrency control, and robust error handling. The system is designed to handle multiple users booking tickets simultaneously without conflicts or double-bookings.
+
+## Core Features
+- **Pessimistic Locking**: Database-level row locking prevents race conditions during concurrent ticket booking
+- **Concurrency Control**: Handles multiple users booking tickets simultaneously using `SELECT ... FOR UPDATE`
+- **Scalable Architecture**: Connection pooling, rate limiting, and efficient database queries
+- **Transaction Safety**: ACID compliance with automatic rollback on failures
+- **Production Ready**: Health checks, structured logging, security headers, graceful shutdown
+
+## Technology Stack
+- **Backend**: Go 1.21+ with Gin web framework
+- **Database**: PostgreSQL 15+ with pessimistic locking
+- **Containerization**: Docker and Docker Compose
+- **Architecture**: Clean architecture with repository pattern
+
+## Key Files
+- Entry point: [server/main.go](mdc:server/main.go)
+- Database schema: [server/migrations/001_initial_schema.up.sql](mdc:server/migrations/001_initial_schema.up.sql)
+- Core booking logic: [server/internal/repository/booking_repository.go](mdc:server/internal/repository/booking_repository.go)
+- API handlers: [server/internal/handlers/](mdc:server/internal/handlers/)
+- Configuration: [server/internal/config/config.go](mdc:server/internal/config/config.go)
+
+## Problem Solved
+Traditional ticket booking systems often suffer from:
+- **Race conditions** leading to overselling
+- **Double bookings** in high-concurrency scenarios  
+- **Poor scalability** under load
+- **Data inconsistency** during peak demand
+
+This system solves these issues with proper pessimistic locking and transaction management.

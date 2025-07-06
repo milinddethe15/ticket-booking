@@ -1,0 +1,160 @@
+# API Endpoints & Usage
+
+## Base Configuration
+- **Base URL**: `http://localhost:8080/api/v1`
+- **Content-Type**: `application/json`
+- **Route Configuration**: [server/main.go](mdc:server/main.go)
+
+## Event Management
+
+### Create Event
+- **Endpoint**: `POST /events`
+- **Handler**: [server/internal/handlers/event_handler.go](mdc:server/internal/handlers/event_handler.go) - `CreateEvent()`
+- **Body**:
+```json
+{
+  "name": "Concert 2024",
+  "description": "Amazing concert event",
+  "venue": "Madison Square Garden",
+  "start_time": "2024-12-31T20:00:00Z",
+  "end_time": "2024-12-31T23:00:00Z",
+  "total_tickets": 1000,
+  "price": 99.99
+}
+```
+
+### Get Events
+- **Endpoint**: `GET /events?page=1&limit=20`
+- **Handler**: `GetEvents()` 
+- **Features**: Pagination support via middleware
+
+### Get Event Details
+- **Endpoint**: `GET /events/{id}`
+- **Handler**: `GetEvent()`
+- **Returns**: Event details with current ticket availability
+
+### Get Available Tickets
+- **Endpoint**: `GET /events/{id}/tickets?limit=50`
+- **Handler**: `GetAvailableTickets()`
+- **Returns**: List of available tickets for the event
+
+### Get All Tickets (Real-time Status)
+- **Endpoint**: `GET /events/{id}/tickets/all`
+- **Handler**: `GetAllTickets()`
+- **Returns**: All tickets with current status (available/locked/reserved/sold)
+- **Purpose**: Real-time seat availability display
+
+### Lock Seat
+- **Endpoint**: `POST /events/{id}/seats/{seatNo}/lock`
+- **Handler**: `LockSeat()`
+- **Headers**: `X-Session-ID: <session_id>`
+- **Action**: Temporarily lock seat for 3 minutes
+- **Response**:
+```json
+{
+  "success": true,
+  "message": "Seat locked successfully"
+}
+```
+
+### Unlock Seat
+- **Endpoint**: `POST /events/{id}/seats/{seatNo}/unlock`
+- **Handler**: `UnlockSeat()`
+- **Headers**: `X-Session-ID: <session_id>`
+- **Action**: Release seat lock
+- **Response**:
+```json
+{
+  "success": true,
+  "message": "Seat unlocked successfully"
+}
+```
+
+## Ticket Booking
+
+### Book Tickets (Core Feature)
+- **Endpoint**: `POST /bookings`
+- **Handler**: [server/internal/handlers/booking_handler.go](mdc:server/internal/handlers/booking_handler.go) - `BookTickets()`
+- **Body**:
+```json
+{
+  "user_id": 1,
+  "event_id": 1,
+  "quantity": 2
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 123,
+    "booking_ref": "BK1751781983773115000",
+    "total_amount": 199.98,
+    "status": "pending",
+    "expires_at": "2024-01-01T15:15:00Z"
+  },
+  "message": "Tickets booked successfully. Please complete payment within 15 minutes."
+}
+```
+
+### Get Booking
+- **Endpoint**: `GET /bookings/{id}`
+- **Handler**: `GetBooking()`
+- **Returns**: Complete booking details including ticket IDs
+
+### Confirm Booking
+- **Endpoint**: `POST /bookings/{id}/confirm`
+- **Handler**: `ConfirmBooking()`
+- **Action**: Converts reserved tickets to sold status
+
+### Cancel Booking
+- **Endpoint**: `POST /bookings/{id}/cancel`
+- **Handler**: `CancelBooking()`
+- **Action**: Releases tickets back to available pool
+
+## Health & Monitoring
+
+### Health Check
+- **Endpoint**: `GET /health`
+- **Handler**: [server/internal/handlers/health_handler.go](mdc:server/internal/handlers/health_handler.go)
+- **Purpose**: Application health status for monitoring
+
+### Readiness Probe
+- **Endpoint**: `GET /ready`
+- **Handler**: `Ready()`
+- **Purpose**: Kubernetes readiness probe
+
+## Middleware Pipeline
+Applied to all API routes via [server/internal/middleware/middleware.go](mdc:server/internal/middleware/middleware.go):
+
+1. **Error Handling**: Global error recovery
+2. **Request Logging**: Structured JSON logs with correlation IDs
+3. **CORS**: Cross-origin request support (includes X-Session-ID header)
+4. **Security Headers**: XSS protection, content type validation
+5. **Request ID**: Unique correlation tracking
+6. **Rate Limiting**: 100 RPS default with burst capacity
+7. **Timeouts**: 30-second request timeout
+8. **Pagination**: Automatic page/limit parameter parsing
+
+## Response Format
+All API responses follow a consistent structure:
+```json
+{
+  "success": true|false,
+  "data": { ... },           // Present on success
+  "error": "Error message",  // Present on failure
+  "message": "Info message"  // Optional additional info
+}
+```
+
+## Error Handling
+- **Validation Errors**: 400 Bad Request
+- **Not Found**: 404 Not Found  
+- **Concurrency Conflicts**: Handled by retry mechanism
+- **Server Errors**: 500 Internal Server Error with correlation ID
+
+## Authentication
+- **Current**: None (development mode)
+- **Future**: JWT-based authentication middleware
+- **Headers**: Reserved for `Authorization: Bearer <token>`

@@ -1,0 +1,202 @@
+# Development Workflow & Setup
+
+## Project Structure
+```
+ticket-booking/
+├── server/                          # Main Go application
+│   ├── main.go                     # Application entry point
+│   ├── internal/                   # Private application code
+│   │   ├── config/                 # Configuration management
+│   │   ├── db/                     # Database layer
+│   │   ├── handlers/               # HTTP handlers
+│   │   ├── middleware/             # HTTP middleware
+│   │   ├── models/                 # Data models
+│   │   └── repository/             # Data access layer
+│   ├── migrations/                 # Database schema migrations
+│   ├── scripts/                    # Utility scripts and sample data
+│   ├── docker-compose.yml          # Development environment
+│   └── Dockerfile                  # Container configuration
+└── .cursor/rules/                  # Project documentation rules
+```
+
+## Quick Start
+
+### 1. Docker Setup (Recommended)
+```bash
+cd server
+docker-compose up --build
+```
+- **Services**: PostgreSQL, Application
+- **Ports**: App (8080), PostgreSQL (5432)
+- **Auto-migration**: Database schema applied automatically
+
+### 2. Local Development
+```bash
+# Install dependencies
+go mod download
+
+# Start database
+docker-compose up postgres -d
+
+# Apply migrations
+psql -h localhost -U ticket_user -d ticket_booking -f migrations/001_initial_schema.up.sql
+
+# Load sample data
+psql -h localhost -U ticket_user -d ticket_booking -f scripts/sample_data.sql
+
+# Run application
+go run main.go
+```
+
+## Configuration
+- **Environment**: [server/internal/config/config.go](mdc:server/internal/config/config.go)
+- **Defaults**: Development-friendly settings
+- **Override**: Environment variables or `.env` file
+
+### Key Settings:
+```bash
+PORT=8080
+DB_HOST=localhost
+DB_MAX_OPEN_CONNS=25
+RATE_LIMIT_RPS=100
+LOG_LEVEL=info
+```
+
+## Database Management
+
+### Schema Migrations
+- **Up Migration**: [server/migrations/001_initial_schema.up.sql](mdc:server/migrations/001_initial_schema.up.sql)
+- **Down Migration**: [server/migrations/001_initial_schema.down.sql](mdc:server/migrations/001_initial_schema.down.sql)
+- **Auto-apply**: Via Docker init scripts
+
+### Sample Data
+- **File**: [server/scripts/sample_data.sql](mdc:server/scripts/sample_data.sql)
+- **Contains**: 5 users, 5 events, tickets for each event
+- **Usage**: `psql -f scripts/sample_data.sql`
+
+## Testing
+
+### Load Testing
+```bash
+# Simple concurrent booking test
+for i in {1..50}; do
+  curl -X POST http://localhost:8080/api/v1/bookings \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":1,"event_id":1,"quantity":1}' &
+done
+```
+
+### Unit Tests
+```bash
+go test ./...
+go test -v ./internal/repository/
+```
+
+### Integration Tests
+```bash
+go test -tags=integration ./...
+```
+
+## Development Commands
+
+### Build & Run
+```bash
+# Build binary
+go build -o bin/ticket-booking main.go
+
+# Run with specific config
+LOG_LEVEL=debug go run main.go
+
+# Production build
+CGO_ENABLED=0 GOOS=linux go build -ldflags '-w -s' main.go
+```
+
+### Docker Operations
+```bash
+# Full restart
+docker-compose down && docker-compose up --build
+
+# View logs
+docker-compose logs -f app
+
+# Database access
+docker-compose exec postgres psql -U ticket_user -d ticket_booking
+```
+
+### Code Quality
+```bash
+# Format code
+go fmt ./...
+
+# Lint (requires golangci-lint)
+golangci-lint run
+
+# Vet
+go vet ./...
+```
+
+## Monitoring & Debugging
+
+### Health Checks
+- **Health**: `GET /health`
+- **Readiness**: `GET /ready`
+
+### Logging
+- **Format**: Structured JSON logs
+- **Correlation**: Request ID tracking
+- **Levels**: Debug, Info, Warn, Error
+
+### Metrics (Future)
+- **Endpoint**: `/metrics` (Prometheus format)
+- **Key Metrics**: Request duration, booking success rate, database connections
+
+## Deployment
+
+### Production Checklist
+1. **Environment Variables**: Set production values
+2. **Database**: Run migrations on production DB
+3. **Security**: Enable authentication middleware
+4. **Monitoring**: Configure health check endpoints
+5. **Scaling**: Adjust connection pools for load
+
+### Kubernetes Example
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-booking
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: ticket-booking
+        image: ticket-booking:latest
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+```
+
+## Common Issues & Solutions
+
+### 1. PostgreSQL Array Errors
+- **Problem**: `unsupported type []int`
+- **Solution**: Use `pq.Array()` for slice parameters
+- **Fixed In**: [server/internal/repository/booking_repository.go](mdc:server/internal/repository/booking_repository.go)
+
+### 2. Booking Reference Collisions
+- **Problem**: Duplicate booking references
+- **Solution**: Use nanosecond timestamps
+- **Implementation**: `fmt.Sprintf("BK%d", time.Now().UnixNano())`
+
+### 3. Database Lock Conflicts
+- **Problem**: Serialization failures under load
+- **Solution**: Use READ_COMMITTED isolation level
+- **Configuration**: [server/internal/db/database.go](mdc:server/internal/db/database.go)

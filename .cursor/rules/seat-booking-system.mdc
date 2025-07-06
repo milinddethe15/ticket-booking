@@ -1,0 +1,197 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Seat Booking System - Patterns and Flow
+
+## Seat Pattern Mapping
+
+### UI to Database Mapping
+- **UI Display**: 8 rows (A-H) × 12 seats per row = 96 total seats
+- **Visual Format**: A1, A2, A3... H10, H11, H12
+- **Database Format**: S001, S002, S003... S094, S095, S096
+
+### Mapping Formula
+```
+seatIndex = rowIndex * 12 + seatNum
+backendSeatNo = `S${seatIndex.toString().padStart(3, '0')}`
+
+Examples:
+- Row A, Seat 1 (rowIndex=0, seatNum=1) → S001
+- Row A, Seat 12 (rowIndex=0, seatNum=12) → S012  
+- Row B, Seat 1 (rowIndex=1, seatNum=1) → S013
+- Row H, Seat 12 (rowIndex=7, seatNum=12) → S096
+```
+
+### Implementation Files
+- UI mapping: [ui/src/components/SeatSelection.tsx](mdc:ui/src/components/SeatSelection.tsx)
+- Database schema: [server/migrations/001_initial_schema.up.sql](mdc:server/migrations/001_initial_schema.up.sql)
+- Sample data: [server/scripts/sample_data.sql](mdc:server/scripts/sample_data.sql)
+
+## Seat Locking Mechanism
+
+### Ticket Status States
+```sql
+status IN ('available', 'reserved', 'sold', 'locked')
+```
+
+- **available**: Seat is free to select
+- **locked**: Temporarily held during selection (3 minutes)  
+- **reserved**: Officially booked, pending payment confirmation
+- **sold**: Payment confirmed, booking complete
+
+### Locking Flow
+1. **User clicks seat** → API call to lock seat immediately
+2. **Lock API** → Changes status from 'available' to 'locked'
+3. **Other users** → See seat as occupied in real-time
+4. **Auto-cleanup** → Locks expire after 3 minutes if not booked
+5. **Booking** → Changes 'locked' to 'reserved', then to 'sold'
+
+### API Endpoints
+```
+POST /api/v1/events/:id/seats/:seatNo/lock   - Lock seat temporarily
+POST /api/v1/events/:id/seats/:seatNo/unlock - Release seat lock
+GET /api/v1/events/:id/tickets/all           - Get all tickets with status
+```
+
+### Implementation Files
+- Lock endpoints: [server/internal/handlers/event_handler.go](mdc:server/internal/handlers/event_handler.go)
+- Lock logic: [server/internal/repository/event_repository.go](mdc:server/internal/repository/event_repository.go)
+- Schema update: [server/migrations/002_add_locked_status.up.sql](mdc:server/migrations/002_add_locked_status.up.sql)
+
+## Booking Flow
+
+### Complete User Journey
+```
+1. Event Selection → User picks event from grid
+2. Seat Selection → User clicks seats (triggers immediate lock)
+3. Seat Locking → API locks seats with pessimistic locking
+4. Payment Form → User fills booking details  
+5. Book Tickets → API books ONLY the locked seats (not random available ones)
+6. Confirm Booking → API changes tickets to 'sold'
+7. Completion → User receives confirmation
+```
+
+### ⚠️ Critical Fix: Booking Logic
+**Previous Bug (FIXED):** Booking system ignored user's seat selection and booked first available seats.
+
+**Current Logic:** 
+```sql
+-- OLD (BROKEN): Selected any available seats
+SELECT id, seat_no FROM tickets 
+WHERE event_id = $1 AND status = 'available' 
+ORDER BY seat_no LIMIT $2
+
+-- NEW (FIXED): Books only user's locked seats  
+SELECT id, seat_no FROM tickets 
+WHERE event_id = $1 AND status = 'locked' 
+ORDER BY seat_no LIMIT $2
+```
+
+### Pessimistic Locking Strategy
+**During Seat Selection:**
+- Individual seat locks via `SELECT ... FOR UPDATE`
+- Prevents race conditions on seat selection
+- 3-minute timeout with auto-cleanup (runs every 1 minute)
+
+**During Booking:**
+- Event-level lock via `SELECT ... FOR UPDATE` 
+- Ticket-level locks for user's selected seats only
+- Transaction-based with automatic rollback
+
+### Implementation Files
+- UI flow: [ui/src/components/BookingFlow.tsx](mdc:ui/src/components/BookingFlow.tsx)
+- Booking logic: [server/internal/repository/booking_repository.go](mdc:server/internal/repository/booking_repository.go)
+- API endpoints: [server/internal/handlers/booking_handler.go](mdc:server/internal/handlers/booking_handler.go)
+
+## Database Schema
+
+### Core Tables
+```sql
+-- Events: Show information and availability
+events {
+  id, name, venue, start_time, end_time
+  total_tickets, available_tickets, price
+}
+
+-- Tickets: Individual seats with status tracking  
+tickets {
+  id, event_id, seat_no, status
+  status: 'available' | 'locked' | 'reserved' | 'sold'
+}
+
+-- Bookings: User reservations with ticket references
+bookings {
+  id, user_id, event_id, ticket_ids[]
+  quantity, total_amount, status, booking_ref
+  expires_at (15 minutes for payment)
+}
+```
+
+### Key Constraints and Indexes
+```sql
+-- Unique seat per event
+UNIQUE(event_id, seat_no)
+
+-- Status constraints with locking support
+CHECK (status IN ('available', 'reserved', 'sold', 'locked'))
+
+-- Performance indexes
+idx_tickets_event_id_status ON tickets(event_id, status)
+idx_bookings_expires_at ON bookings(expires_at)
+```
+
+### Critical Queries
+```sql
+-- Lock seat (pessimistic)
+SELECT status FROM tickets 
+WHERE event_id = $1 AND seat_no = $2 FOR UPDATE;
+
+-- Get all ticket statuses (real-time UI)
+SELECT seat_no, status FROM tickets 
+WHERE event_id = $1 ORDER BY seat_no;
+
+-- Auto-cleanup expired locks (background job - runs every 1 minute)
+UPDATE tickets SET status = 'available' 
+WHERE status = 'locked' AND updated_at < NOW() - INTERVAL '3 minutes';
+```
+
+### Auto-cleanup Implementation
+**Background Process:**
+- Runs every **1 minute** as goroutine in main.go
+- Unlocks seats locked for **more than 3 minutes**
+- Prevents abandoned seat locks from blocking other users
+
+```go
+// Background cleanup routine
+go startSeatLockCleanup(eventRepo, logger)
+
+// Cleanup query
+UPDATE tickets SET status = 'available' 
+WHERE status = 'locked' 
+AND updated_at < NOW() - INTERVAL '3 minutes'
+```
+
+## Real-time Synchronization
+
+### Polling Strategy
+- **UI polls every 3 seconds** for ticket status updates
+- **Separate queries**: Available tickets + All tickets
+- **Immediate updates** on user actions (lock/unlock)
+
+### CORS Configuration
+- **Custom headers**: `X-Session-ID` for session tracking
+- **Methods**: GET, POST for all booking operations
+- **Headers**: Standard + session tracking headers
+
+### Error Handling
+- **Lock conflicts**: "Seat was just taken by another user"
+- **Expired locks**: Auto-cleanup with user notification  
+- **Network failures**: Retry with exponential backoff
+
+## Configuration Files
+- Routes: [server/main.go](mdc:server/main.go)  
+- CORS: [server/internal/middleware/middleware.go](mdc:server/internal/middleware/middleware.go)
+- Models: [server/internal/models/models.go](mdc:server/internal/models/models.go)
+- API client: [ui/src/services/api.ts](mdc:ui/src/services/api.ts)

@@ -1,0 +1,56 @@
+# System Architecture
+
+## Clean Architecture Pattern
+The application follows clean architecture principles with clear separation of concerns:
+
+```
+server/
+├── main.go                 # Application entry point with server setup
+├── internal/
+│   ├── config/            # Configuration management
+│   ├── db/                # Database connection and transaction handling
+│   ├── handlers/          # HTTP request handlers (presentation layer)
+│   ├── middleware/        # HTTP middleware (auth, logging, rate limiting)
+│   ├── models/           # Data models and DTOs
+│   └── repository/       # Data access layer (business logic)
+├── migrations/           # Database schema migrations
+└── scripts/             # Sample data and utilities
+```
+
+## Key Components
+
+### 1. Database Layer
+- **Connection**: [server/internal/db/database.go](mdc:server/internal/db/database.go)
+- **Migrations**: [server/migrations/001_initial_schema.up.sql](mdc:server/migrations/001_initial_schema.up.sql)
+- **Features**: Connection pooling, transaction management, retry mechanisms
+
+### 2. Repository Pattern
+- **Booking Repository**: [server/internal/repository/booking_repository.go](mdc:server/internal/repository/booking_repository.go)
+- **Event Repository**: [server/internal/repository/event_repository.go](mdc:server/internal/repository/event_repository.go)
+- **Responsibilities**: Data access, business logic, transaction management
+
+### 3. HTTP Layer
+- **Booking Handler**: [server/internal/handlers/booking_handler.go](mdc:server/internal/handlers/booking_handler.go)
+- **Event Handler**: [server/internal/handlers/event_handler.go](mdc:server/internal/handlers/event_handler.go)
+- **Health Handler**: [server/internal/handlers/health_handler.go](mdc:server/internal/handlers/health_handler.go)
+
+### 4. Middleware Stack
+- **Implementation**: [server/internal/middleware/middleware.go](mdc:server/internal/middleware/middleware.go)
+- **Features**: Rate limiting, CORS, security headers, request logging, timeouts
+
+### 5. Models and DTOs
+- **Data Models**: [server/internal/models/models.go](mdc:server/internal/models/models.go)
+- **Contains**: Event, Ticket, Booking, User models and API response types
+
+## Database Design
+- **Users**: Customer information
+- **Events**: Concert/show details with ticket counts
+- **Tickets**: Individual seats with status tracking
+- **Bookings**: Reservation records with expiration
+
+## Scalability Features
+- **Connection Pooling**: Configurable database connections
+- **Rate Limiting**: Token bucket algorithm
+- **Middleware Pipeline**: Efficient request processing
+- **Health Checks**: Kubernetes-ready endpoints
+- **Graceful Shutdown**: Clean resource cleanup
